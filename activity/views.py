@@ -21,6 +21,7 @@ from .serializers import (
     NotificationOutSerializer,
     NotificationsQuerySerializer,
 )
+from .analytics import analytics
 from .sse import broker, format_sse
 
 
@@ -127,6 +128,8 @@ class EventIngestView(APIView):
             # This keeps the stream consistent with polling/backfill.
             if target_user_ids:
                 target_ids_for_publish = target_user_ids[:]
+                object_id_for_analytics = str(data["object_id"])
+                verb_for_analytics = str(data["verb"])
 
                 def _publish_after_commit() -> None:
                     # NOTE: broker is in-memory; avoid extra DB work when nobody is listening.
@@ -181,7 +184,20 @@ class EventIngestView(APIView):
                     else:
                         loop.create_task(_go())
 
-                transaction.on_commit(_publish_after_commit)
+                def _on_commit() -> None:
+                    # Count by ingestion time for "as real-time as possible".
+                    analytics.record(object_id=object_id_for_analytics, verb=verb_for_analytics)
+                    _publish_after_commit()
+
+                transaction.on_commit(_on_commit)
+            else:
+                object_id_for_analytics = str(data["object_id"])
+                verb_for_analytics = str(data["verb"])
+
+                def _on_commit_counts_only() -> None:
+                    analytics.record(object_id=object_id_for_analytics, verb=verb_for_analytics)
+
+                transaction.on_commit(_on_commit_counts_only)
 
         return Response({"event_id": event.id}, status=status.HTTP_201_CREATED)
 
@@ -377,3 +393,27 @@ class NotificationsStreamView(APIView):
         resp["Cache-Control"] = "no-cache"
         resp["X-Accel-Buffering"] = "no"
         return resp
+
+
+class TopView(APIView):
+    """
+    GET /api/top?window=1m|5m|1h&by=object_id|verb
+    """
+
+    def get(self, request):
+        window = (request.GET.get("window") or "").strip()
+        by = (request.GET.get("by") or "object_id").strip()
+        if window not in {"1m", "5m", "1h"}:
+            return Response({"detail": "window must be one of: 1m, 5m, 1h"}, status=status.HTTP_400_BAD_REQUEST)
+        if by not in {"object_id", "verb"}:
+            return Response({"detail": "by must be one of: object_id, verb"}, status=status.HTTP_400_BAD_REQUEST)
+
+        pairs = analytics.top(window=window, by=by, k=100)
+        return Response(
+            {
+                "window": window,
+                "by": by,
+                "items": [{"key": k, "count": c} for k, c in pairs],
+            },
+            status=status.HTTP_200_OK,
+        )

@@ -67,3 +67,17 @@ class NotificationsTests(TestCase):
         self.assertEqual(r.status_code, 200)
         self.assertEqual(len(r.data["items"]), 1)
         self.assertEqual(r.data["items"][0]["event"]["object_id"], "2")
+
+
+class AnalyticsTests(TestCase):
+    def test_top_counts_object_ids(self):
+        from .analytics import SlidingWindowTop
+
+        sw = SlidingWindowTop(window_seconds=60, bucket_size_seconds=5)
+        sw.add("a", ts=100.0)
+        sw.add("a", ts=101.0)
+        sw.add("b", ts=101.0)
+
+        top = sw.top(now_ts=110.0)
+        self.assertEqual(top[0], ("a", 2))
+        self.assertEqual(top[1], ("b", 1))
