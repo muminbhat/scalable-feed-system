@@ -1,0 +1,5 @@
+timestamp_utc,dataset_events,endpoint,method,url,concurrency,requests,rps,time_per_request_ms_mean,time_per_request_ms_mean_across,conn_total_ms_min,conn_total_ms_mean,conn_total_ms_median,conn_total_ms_max,p50_ms,p90_ms,p95_ms,p99_ms,cpu_seconds,working_set_mb,notes
+2026-02-04T13:27:58Z,100000,events,POST,http://127.0.0.1:8000/api/events,20,200,3.29,6072.326,303.616,372,5676,6929,15582,6929,11048,12987,15575,,,
+2026-02-04T13:28:06Z,100000,feed,GET,http://127.0.0.1:8000/api/feed?user_id=2&limit=50,20,200,25.83,774.291,38.715,27,758,523,1030,523,1027,1028,1030,,,
+2026-02-04T13:28:14Z,100000,notifications,GET,http://127.0.0.1:8000/api/notifications?user_id=2&since=0&limit=50,20,200,25.13,795.987,39.799,123,769,1020,1050,1020,1039,1046,1050,,,
+2026-02-04T13:28:21Z,100000,top,GET,http://127.0.0.1:8000/api/top?window=1m,20,200,27.65,723.268,36.163,5,709,523,1029,523,1027,1028,1029,,,

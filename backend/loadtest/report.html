@@ -1,0 +1,92 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Load test report</title>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 20px; }
+    .grid { display: grid; grid-template-columns: 1fr; gap: 24px; max-width: 1100px; }
+    canvas { background: #fff; border: 1px solid #eee; }
+    code { background: #f6f8fa; padding: 2px 4px; border-radius: 4px; }
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+</head>
+<body>
+  <h2>Load test report</h2>
+  <p>Generated: <code>2026-02-04T13:28:21Z</code></p>
+  <div class="grid">
+    <div>
+      <h3>Requests/sec vs concurrency</h3>
+      <canvas id="rpsChart" height="120"></canvas>
+    </div>
+    <div>
+      <h3>Mean time/request (ms) vs concurrency</h3>
+      <canvas id="tprChart" height="120"></canvas>
+    </div>
+  </div>
+
+  <script>
+    const rows = [{"timestamp_utc": "2026-02-04T13:27:58Z", "dataset_events": 100000, "endpoint": "events", "method": "POST", "url": "http://127.0.0.1:8000/api/events", "concurrency": 20, "requests": 200, "rps": 3.29, "time_per_request_ms_mean": 6072.326, "time_per_request_ms_mean_across": 303.616, "conn_total_ms_min": 372, "conn_total_ms_mean": 5676, "conn_total_ms_median": 6929, "conn_total_ms_max": 15582, "p50_ms": 6929, "p90_ms": 11048, "p95_ms": 12987, "p99_ms": 15575, "cpu_seconds": null, "working_set_mb": null, "notes": ""}, {"timestamp_utc": "2026-02-04T13:28:06Z", "dataset_events": 100000, "endpoint": "feed", "method": "GET", "url": "http://127.0.0.1:8000/api/feed?user_id=2&limit=50", "concurrency": 20, "requests": 200, "rps": 25.83, "time_per_request_ms_mean": 774.291, "time_per_request_ms_mean_across": 38.715, "conn_total_ms_min": 27, "conn_total_ms_mean": 758, "conn_total_ms_median": 523, "conn_total_ms_max": 1030, "p50_ms": 523, "p90_ms": 1027, "p95_ms": 1028, "p99_ms": 1030, "cpu_seconds": null, "working_set_mb": null, "notes": ""}, {"timestamp_utc": "2026-02-04T13:28:14Z", "dataset_events": 100000, "endpoint": "notifications", "method": "GET", "url": "http://127.0.0.1:8000/api/notifications?user_id=2&since=0&limit=50", "concurrency": 20, "requests": 200, "rps": 25.13, "time_per_request_ms_mean": 795.987, "time_per_request_ms_mean_across": 39.799, "conn_total_ms_min": 123, "conn_total_ms_mean": 769, "conn_total_ms_median": 1020, "conn_total_ms_max": 1050, "p50_ms": 1020, "p90_ms": 1039, "p95_ms": 1046, "p99_ms": 1050, "cpu_seconds": null, "working_set_mb": null, "notes": ""}, {"timestamp_utc": "2026-02-04T13:28:21Z", "dataset_events": 100000, "endpoint": "top", "method": "GET", "url": "http://127.0.0.1:8000/api/top?window=1m", "concurrency": 20, "requests": 200, "rps": 27.65, "time_per_request_ms_mean": 723.268, "time_per_request_ms_mean_across": 36.163, "conn_total_ms_min": 5, "conn_total_ms_mean": 709, "conn_total_ms_median": 523, "conn_total_ms_max": 1029, "p50_ms": 523, "p90_ms": 1027, "p95_ms": 1028, "p99_ms": 1029, "cpu_seconds": null, "working_set_mb": null, "notes": ""}];
+    function groupBy(arr, keyFn) {
+      const m = new Map();
+      for (const x of arr) {
+        const k = keyFn(x);
+        if (!m.has(k)) m.set(k, []);
+        m.get(k).push(x);
+      }
+      return m;
+    }
+
+    // Create datasets: one line per (endpoint,dataset_events)
+    const grouped = groupBy(rows, r => `${r.endpoint}|${r.dataset_events}`);
+    const labels = [...new Set(rows.map(r => r.concurrency))].sort((a,b)=>a-b);
+
+    function mkDatasets(valueKey) {
+      const out = [];
+      for (const [k, arr] of grouped.entries()) {
+        arr.sort((a,b)=>a.concurrency-b.concurrency);
+        const label = k;
+        const map = new Map(arr.map(r => [r.concurrency, r[valueKey]]));
+        out.push({
+          label,
+          data: labels.map(c => map.get(c) ?? null),
+          spanGaps: true,
+        });
+      }
+      return out;
+    }
+
+    new Chart(document.getElementById('rpsChart'), {
+      type: 'line',
+      data: {
+        labels,
+        datasets: mkDatasets('rps'),
+      },
+      options: {
+        responsive: true,
+        interaction: { mode: 'nearest', intersect: false },
+        scales: {
+          x: { title: { display: true, text: 'concurrency' } },
+          y: { title: { display: true, text: 'requests/sec' } }
+        }
+      }
+    });
+
+    new Chart(document.getElementById('tprChart'), {
+      type: 'line',
+      data: {
+        labels,
+        datasets: mkDatasets('time_per_request_ms_mean'),
+      },
+      options: {
+        responsive: true,
+        interaction: { mode: 'nearest', intersect: false },
+        scales: {
+          x: { title: { display: true, text: 'concurrency' } },
+          y: { title: { display: true, text: 'mean ms/request' } }
+        }
+      }
+    });
+  </script>
+</body>
+</html>
