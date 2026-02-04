@@ -29,3 +29,19 @@ class EventOutSerializer(serializers.Serializer):
     object_id = serializers.CharField()
     created_at = serializers.DateTimeField()
 
+
+class NotificationsQuerySerializer(serializers.Serializer):
+    user_id = serializers.IntegerField(min_value=1, required=False)
+    since = serializers.IntegerField(min_value=0, required=False)
+    limit = serializers.IntegerField(min_value=1, max_value=200, required=False)
+
+
+class NotificationOutSerializer(serializers.Serializer):
+    notification_id = serializers.IntegerField(source="id")
+    user_id = serializers.IntegerField()
+    created_at = serializers.DateTimeField()
+    read_at = serializers.DateTimeField(allow_null=True)
+    delivered_at = serializers.DateTimeField(allow_null=True)
+
+    event = EventOutSerializer()
+

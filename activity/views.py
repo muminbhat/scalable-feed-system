@@ -9,7 +9,13 @@ from rest_framework.views import APIView
 
 from .cursors import decode_feed_cursor, encode_feed_cursor
 from .models import Event, FeedItem, IdempotencyKey, Notification
-from .serializers import EventIngestSerializer, EventOutSerializer, FeedQuerySerializer
+from .serializers import (
+    EventIngestSerializer,
+    EventOutSerializer,
+    FeedQuerySerializer,
+    NotificationOutSerializer,
+    NotificationsQuerySerializer,
+)
 
 
 def _get_header_user_id(request) -> int | None:
@@ -176,6 +182,58 @@ class FeedView(APIView):
             {
                 "items": EventOutSerializer(events, many=True).data,
                 "next_cursor": next_cursor,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class NotificationsView(APIView):
+    """
+    GET /api/notifications?user_id=<id>&since=<optional>&limit=<optional>
+
+    Returns:
+      { items: [notification...], next_since }
+    """
+
+    DEFAULT_LIMIT = 100
+    MAX_LIMIT = 200
+
+    def get(self, request):
+        header_user_id = _get_header_user_id(request)
+        if header_user_id is None:
+            return Response(
+                {"detail": "Missing or invalid X-User-Id header."},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+
+        qs = NotificationsQuerySerializer(data=request.query_params)
+        qs.is_valid(raise_exception=True)
+        params = qs.validated_data
+
+        user_id = int(params.get("user_id") or header_user_id)
+        if user_id != int(header_user_id):
+            return Response(
+                {"detail": "user_id must match X-User-Id header."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        since = int(params.get("since") or 0)
+
+        limit = int(params.get("limit") or self.DEFAULT_LIMIT)
+        limit = max(1, min(limit, self.MAX_LIMIT))
+
+        notif_qs = (
+            Notification.objects.filter(user_id=user_id, id__gt=since)
+            .select_related("event")
+            .order_by("id")
+        )
+        notifications = list(notif_qs[:limit])
+
+        next_since = notifications[-1].id if notifications else since
+        return Response(
+            {
+                "items": NotificationOutSerializer(notifications, many=True).data,
+                "next_since": next_since,
             },
             status=status.HTTP_200_OK,
         )

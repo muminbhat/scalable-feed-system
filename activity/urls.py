@@ -1,6 +1,6 @@
 from django.urls import path
 
-from .views import EventIngestView, FeedView
+from .views import EventIngestView, FeedView, NotificationsView
 
 urlpatterns = [
     # Support both with and without trailing slash (POST redirects are painful).
@@ -9,4 +9,7 @@ urlpatterns = [
 
     path("feed", FeedView.as_view(), name="feed"),
     path("feed/", FeedView.as_view(), name="feed-slash"),
+
+    path("notifications", NotificationsView.as_view(), name="notifications"),
+    path("notifications/", NotificationsView.as_view(), name="notifications-slash"),
 ]

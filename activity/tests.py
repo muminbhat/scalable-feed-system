@@ -36,3 +36,34 @@ class FeedTests(TestCase):
         self.assertEqual(r2.status_code, 200)
         self.assertEqual(len(r2.data["items"]), 2)
         self.assertNotEqual(r1.data["items"][0]["event_id"], r2.data["items"][0]["event_id"])
+
+
+class NotificationsTests(TestCase):
+    def test_notifications_since_filters_by_id(self):
+        now = timezone.now()
+        ev1 = Event.objects.create(
+            actor_id=1,
+            verb="comment",
+            object_type="post",
+            object_id="1",
+            created_at=now,
+        )
+        ev2 = Event.objects.create(
+            actor_id=1,
+            verb="comment",
+            object_type="post",
+            object_id="2",
+            created_at=now,
+        )
+        from .models import Notification
+
+        n1 = Notification.objects.create(user_id=2, event=ev1, created_at=now)
+        Notification.objects.create(user_id=2, event=ev2, created_at=now)
+
+        client = APIClient()
+        client.credentials(HTTP_X_USER_ID="2")
+
+        r = client.get("/api/notifications", {"user_id": 2, "since": n1.id})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(len(r.data["items"]), 1)
+        self.assertEqual(r.data["items"][0]["event"]["object_id"], "2")
