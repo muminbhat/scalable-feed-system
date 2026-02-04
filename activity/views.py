@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 from django.db import IntegrityError, transaction
+from django.db.models import Q
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from .cursors import decode_feed_cursor, encode_feed_cursor
 from .models import Event, FeedItem, IdempotencyKey, Notification
-from .serializers import EventIngestSerializer
+from .serializers import EventIngestSerializer, EventOutSerializer, FeedQuerySerializer
 
 
 def _get_header_user_id(request) -> int | None:
@@ -110,3 +112,70 @@ class EventIngestView(APIView):
                 idem.save(update_fields=["event"])
 
         return Response({"event_id": event.id}, status=status.HTTP_201_CREATED)
+
+
+class FeedView(APIView):
+    """
+    GET /api/feed?user_id=<id>&cursor=<optional>&limit=<optional>
+
+    Returns:
+      { items: [event...], next_cursor }
+    """
+
+    DEFAULT_LIMIT = 50
+    MAX_LIMIT = 200
+
+    def get(self, request):
+        header_user_id = _get_header_user_id(request)
+        if header_user_id is None:
+            return Response(
+                {"detail": "Missing or invalid X-User-Id header."},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+
+        qs = FeedQuerySerializer(data=request.query_params)
+        qs.is_valid(raise_exception=True)
+        params = qs.validated_data
+
+        user_id = int(params.get("user_id") or header_user_id)
+        if user_id != int(header_user_id):
+            return Response(
+                {"detail": "user_id must match X-User-Id header."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        limit = int(params.get("limit") or self.DEFAULT_LIMIT)
+        limit = max(1, min(limit, self.MAX_LIMIT))
+
+        cursor_raw = params.get("cursor") or ""
+        cursor = decode_feed_cursor(cursor_raw)
+        if cursor_raw and cursor is None:
+            return Response({"detail": "Invalid cursor."}, status=status.HTTP_400_BAD_REQUEST)
+
+        feed_qs = (
+            FeedItem.objects.filter(user_id=user_id)
+            .select_related("event")
+            .order_by("-created_at", "-id")
+        )
+
+        if cursor is not None:
+            feed_qs = feed_qs.filter(
+                Q(created_at__lt=cursor.created_at)
+                | Q(created_at=cursor.created_at, id__lt=cursor.feed_item_id)
+            )
+
+        feed_items = list(feed_qs[:limit])
+        events = [fi.event for fi in feed_items]
+
+        next_cursor = None
+        if len(feed_items) == limit:
+            last = feed_items[-1]
+            next_cursor = encode_feed_cursor(last.created_at, last.id)
+
+        return Response(
+            {
+                "items": EventOutSerializer(events, many=True).data,
+                "next_cursor": next_cursor,
+            },
+            status=status.HTTP_200_OK,
+        )

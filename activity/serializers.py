@@ -14,3 +14,18 @@ class EventIngestSerializer(serializers.Serializer):
     )
     created_at = serializers.DateTimeField(required=False)
 
+
+class FeedQuerySerializer(serializers.Serializer):
+    user_id = serializers.IntegerField(min_value=1, required=False)
+    cursor = serializers.CharField(required=False, allow_blank=True)
+    limit = serializers.IntegerField(min_value=1, max_value=200, required=False)
+
+
+class EventOutSerializer(serializers.Serializer):
+    event_id = serializers.IntegerField(source="id")
+    actor_id = serializers.IntegerField()
+    verb = serializers.CharField()
+    object_type = serializers.CharField()
+    object_id = serializers.CharField()
+    created_at = serializers.DateTimeField()
+
