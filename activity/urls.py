@@ -1,6 +1,6 @@
 from django.urls import path
 
-from .views import EventIngestView, FeedView, NotificationsView
+from .views import EventIngestView, FeedView, NotificationsStreamView, NotificationsView
 
 urlpatterns = [
     # Support both with and without trailing slash (POST redirects are painful).
@@ -12,4 +12,7 @@ urlpatterns = [
 
     path("notifications", NotificationsView.as_view(), name="notifications"),
     path("notifications/", NotificationsView.as_view(), name="notifications-slash"),
+
+    path("notifications/stream", NotificationsStreamView.as_view(), name="notifications-stream"),
+    path("notifications/stream/", NotificationsStreamView.as_view(), name="notifications-stream-slash"),
 ]

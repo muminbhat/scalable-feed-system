@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+import asyncio
+import json
+
 from django.db import IntegrityError, transaction
 from django.db.models import Q
+from django.http import StreamingHttpResponse
 from django.utils import timezone
+from django.utils.decorators import classonlymethod
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -16,6 +21,7 @@ from .serializers import (
     NotificationOutSerializer,
     NotificationsQuerySerializer,
 )
+from .sse import broker, format_sse
 
 
 def _get_header_user_id(request) -> int | None:
@@ -116,6 +122,66 @@ class EventIngestView(APIView):
             if idem is not None:
                 idem.event = event
                 idem.save(update_fields=["event"])
+
+            # Publish to SSE subscribers only after the DB commit completes.
+            # This keeps the stream consistent with polling/backfill.
+            if target_user_ids:
+                target_ids_for_publish = target_user_ids[:]
+
+                def _publish_after_commit() -> None:
+                    # NOTE: broker is in-memory; avoid extra DB work when nobody is listening.
+                    # We check in the event loop since broker uses an asyncio lock.
+                    async def _go() -> None:
+                        if not await broker.any_subscribers(target_ids_for_publish):
+                            return
+
+                        rows = list(
+                            Notification.objects.filter(
+                                event_id=event.id,
+                                user_id__in=target_ids_for_publish,
+                            )
+                            .select_related("event")
+                            .values(
+                                "id",
+                                "user_id",
+                                "created_at",
+                                "read_at",
+                                "delivered_at",
+                                "event__id",
+                                "event__actor_id",
+                                "event__verb",
+                                "event__object_type",
+                                "event__object_id",
+                                "event__created_at",
+                            )
+                        )
+                        for r in rows:
+                            msg = {
+                                "notification_id": r["id"],
+                                "user_id": r["user_id"],
+                                "created_at": r["created_at"].isoformat(),
+                                "read_at": r["read_at"].isoformat() if r["read_at"] else None,
+                                "delivered_at": r["delivered_at"].isoformat() if r["delivered_at"] else None,
+                                "event": {
+                                    "event_id": r["event__id"],
+                                    "actor_id": r["event__actor_id"],
+                                    "verb": r["event__verb"],
+                                    "object_type": r["event__object_type"],
+                                    "object_id": r["event__object_id"],
+                                    "created_at": r["event__created_at"].isoformat(),
+                                },
+                            }
+                            await broker.publish(int(r["user_id"]), msg)
+
+                    # Run in whichever loop Django/ASGI is using.
+                    try:
+                        loop = asyncio.get_running_loop()
+                    except RuntimeError:
+                        asyncio.run(_go())
+                    else:
+                        loop.create_task(_go())
+
+                transaction.on_commit(_publish_after_commit)
 
         return Response({"event_id": event.id}, status=status.HTTP_201_CREATED)
 
@@ -237,3 +303,77 @@ class NotificationsView(APIView):
             },
             status=status.HTTP_200_OK,
         )
+
+
+class NotificationsStreamView(APIView):
+    """
+    GET /api/notifications/stream?user_id=<id>
+
+    Server-Sent Events stream of notifications.
+    Supports resume via Last-Event-ID header (notification id).
+    """
+
+    # DRF's APIView is sync by default; we expose an async handler via `as_view`.
+    @classonlymethod
+    def as_view(cls, **initkwargs):  # type: ignore[override]
+        view = super().as_view(**initkwargs)
+        view._is_coroutine = asyncio.coroutines._is_coroutine  # type: ignore[attr-defined]
+        return view
+
+    async def get(self, request):
+        header_user_id = _get_header_user_id(request)
+        if header_user_id is None:
+            return Response(
+                {"detail": "Missing or invalid X-User-Id header."},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+
+        # user_id must match header
+        try:
+            user_id = int(request.GET.get("user_id") or header_user_id)
+        except (TypeError, ValueError):
+            return Response({"detail": "Invalid user_id."}, status=status.HTTP_400_BAD_REQUEST)
+        if user_id != int(header_user_id):
+            return Response(
+                {"detail": "user_id must match X-User-Id header."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        last_event_id_raw = request.headers.get("Last-Event-ID")
+        try:
+            last_event_id = int(last_event_id_raw) if last_event_id_raw else 0
+        except (TypeError, ValueError):
+            last_event_id = 0
+
+        sub = await broker.subscribe(user_id)
+
+        async def stream():
+            try:
+                # Let browsers reconnect quickly.
+                yield "retry: 3000\n\n"
+
+                # Backfill from DB if the client is resuming.
+                if last_event_id > 0:
+                    rows = list(
+                        Notification.objects.filter(user_id=user_id, id__gt=last_event_id)
+                        .select_related("event")
+                        .order_by("id")[:200]
+                    )
+                    for n in rows:
+                        msg = NotificationOutSerializer(n).data
+                        yield format_sse(data=msg, event_id=n.id)
+
+                # Live stream
+                while True:
+                    try:
+                        msg = await asyncio.wait_for(sub.queue.get(), timeout=15.0)
+                        yield format_sse(data=msg, event_id=int(msg.get("notification_id") or 0))
+                    except TimeoutError:
+                        yield ": keep-alive\n\n"
+            finally:
+                await broker.unsubscribe(sub)
+
+        resp = StreamingHttpResponse(stream(), content_type="text/event-stream")
+        resp["Cache-Control"] = "no-cache"
+        resp["X-Accel-Buffering"] = "no"
+        return resp
