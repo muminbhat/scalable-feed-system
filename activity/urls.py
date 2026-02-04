@@ -1,12 +1,9 @@
 from django.urls import path
 
-urlpatterns = [
-    # Endpoints added in later sections.
-]
-
-from django.urls import path
+from .views import EventIngestView
 
 urlpatterns = [
-    # API endpoints will be added here in the next sections.
+    # Support both with and without trailing slash (POST redirects are painful).
+    path("events", EventIngestView.as_view(), name="events-ingest"),
+    path("events/", EventIngestView.as_view(), name="events-ingest-slash"),
 ]
-
